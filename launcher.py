@@ -5,93 +5,128 @@ Run this to interactively start a new or resume a tmux session,
 then optionally launch Claude with new or resume options.
 """
 
+import os
 import subprocess
 import sys
 import secrets
-from pathlib import Path
 
-def run_cmd(cmd, shell=False):
-    """Execute shell command, return stdout as string."""
+
+def run_cmd(args):
+    """Execute a command as a list (no shell). Returns (stdout, stderr, returncode)."""
     try:
-        result = subprocess.run(
-            cmd if shell else cmd.split(),
-            capture_output=True,
-            text=True,
-            shell=shell
-        )
-        return result.stdout.strip(), result.returncode
+        result = subprocess.run(args, capture_output=True, text=True)
+        return result.stdout.strip(), result.stderr.strip(), result.returncode
     except Exception as e:
-        print(f"Error running command: {e}")
-        return "", 1
+        return "", str(e), 1
+
+
+def run_shell(cmd):
+    """Execute a shell pipeline string. Returns (stdout, stderr, returncode)."""
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, shell=True)
+        return result.stdout.strip(), result.stderr.strip(), result.returncode
+    except Exception as e:
+        return "", str(e), 1
+
+
+def attach_session(session_name):
+    """Replace current process with tmux attach — required for live TTY."""
+    os.execvp("tmux", ["tmux", "attach-session", "-t", session_name])
+
 
 def list_tmux_sessions():
-    """List all tmux sessions with activity info."""
-    cmd = "tmux ls -F '#{session_activity} | ID: #{session_id} | Name: #{session_name} | Created: #{t:session_created}' | sort -rg"
-    output, code = run_cmd(cmd, shell=True)
-    if code == 0 and output:
-        return output.split('\n')
-    return []
+    """Return list of session names sorted by most recent activity."""
+    cmd = "tmux ls -F '#{session_activity}\t#{session_name}' | sort -rg"
+    output, _, code = run_shell(cmd)
+    if code != 0 or not output:
+        return []
+    sessions = []
+    for line in output.split('\n'):
+        parts = line.split('\t', 1)
+        if len(parts) == 2:
+            sessions.append(parts[1])
+    return sessions
+
+
+def prompt_choice(prompt, options):
+    """Loop until user picks a valid numbered option. Returns 1-based index."""
+    while True:
+        for i, opt in enumerate(options, 1):
+            print(f"{i}) {opt}")
+        raw = input(prompt).strip()
+        try:
+            idx = int(raw)
+            if 1 <= idx <= len(options):
+                return idx
+        except ValueError:
+            pass
+        print("Invalid choice, try again.")
+
+
+def create_tmux_session():
+    """Create a new named tmux session. Returns session name or exits on failure."""
+    hex_code = secrets.token_hex(3)
+    session_name = f"claude-{hex_code}"
+    print(f"\n✓ Creating new session: {session_name}")
+    _, stderr, code = run_cmd(["tmux", "new-session", "-d", "-s", session_name])
+    if code != 0:
+        msg = f": {stderr}" if stderr else ""
+        print(f"Error: failed to create tmux session '{session_name}'{msg}.")
+        sys.exit(1)
+    tmux_send(session_name, "clear")
+    return session_name
+
+
+def tmux_send(session_name, keys):
+    """Send keys to a tmux session. Exits with error if session is gone."""
+    _, stderr, code = run_cmd(["tmux", "send-keys", "-t", session_name, keys, "Enter"])
+    if code != 0:
+        msg = f": {stderr}" if stderr else ""
+        print(f"Error: failed to send keys to session '{session_name}'{msg}.")
+        sys.exit(1)
+
 
 def step_1_tmux():
-    """Step 1: Ask new or resume tmux session."""
+    """Step 1: New or resume tmux session. Returns session name."""
     print("\n=== TMUX SESSION ===")
-    print("1) New tmux session")
-    print("2) Resume existing session")
-    choice = input("Pick 1 or 2: ").strip()
+    choice = prompt_choice("Pick 1 (new) or 2 (resume): ", ["New tmux session", "Resume existing session"])
 
-    if choice == "1":
-        # 1a: New session
-        hex_code = secrets.token_hex(3)
-        session_name = f"claude-{hex_code}"
-        print(f"\n✓ Creating new session: {session_name}")
-        run_cmd(f"tmux new-session -d -s {session_name}", shell=True)
-        run_cmd(f"tmux send-keys -t {session_name} 'clear' Enter", shell=True)
-        return session_name
+    if choice == 1:
+        return create_tmux_session()
 
-    elif choice == "2":
-        # 1b: Resume session
+    # Resume
+    while True:
         sessions = list_tmux_sessions()
         if not sessions:
-            print("No tmux sessions found.")
-            return step_1_tmux()  # Retry
+            print("No tmux sessions found. Create one first.")
+            inner = prompt_choice("Pick 1 (new) or 2 (retry list): ", ["New tmux session", "Retry"])
+            if inner == 1:
+                return create_tmux_session()
+            continue
 
         print("\nAvailable sessions (sorted by recent activity):")
-        for i, sess in enumerate(sessions, 1):
-            print(f"{i}) {sess}")
+        idx = prompt_choice("\nPick session number: ", sessions)
+        session_name = sessions[idx - 1]
+        print(f"\n✓ Resuming session: {session_name}")
+        return session_name
 
-        idx = input("\nPick session number: ").strip()
-        try:
-            selected = sessions[int(idx) - 1]
-            # Extract session name (last field after "Name: ")
-            session_name = selected.split("| Name: ")[-1].split(" |")[0]
-            print(f"\n✓ Resuming session: {session_name}")
-            return session_name
-        except (ValueError, IndexError):
-            print("Invalid choice, try again.")
-            return step_1_tmux()
-    else:
-        print("Invalid choice.")
-        return step_1_tmux()
 
 def step_2_claude(session_name):
-    """Step 2: Ask new or resume Claude session."""
+    """Step 2: Launch Claude in the tmux session, then attach."""
     print("\n=== CLAUDE SESSION ===")
-    print("1) New Claude session (remote-control)")
-    print("2) Resume Claude session")
-    choice = input("Pick 1 or 2: ").strip()
+    choice = prompt_choice("Pick 1 (new remote-control) or 2 (resume): ",
+                           ["New Claude session (remote-control)", "Resume Claude session"])
 
-    if choice == "1":
-        print(f"\n✓ Launching Claude (new remote-control)")
-        run_cmd(f"tmux send-keys -t {session_name} 'claude remote-control' Enter", shell=True)
-    elif choice == "2":
-        print(f"\n✓ Launching Claude (resume)")
-        run_cmd(f"tmux send-keys -t {session_name} 'claude resume' Enter", shell=True)
+    if choice == 1:
+        print("\n✓ Launching Claude (new remote-control)")
+        tmux_send(session_name, "claude remote-control")
     else:
-        print("Invalid choice.")
-        return step_2_claude(session_name)
+        print("\n✓ Launching Claude (resume)")
+        tmux_send(session_name, "claude resume")
 
     print(f"\n✓ Attaching to tmux session '{session_name}'...")
-    run_cmd(f"tmux attach-session -t {session_name}", shell=True)
+    attach_session(session_name)  # exec — never returns
+
 
 if __name__ == "__main__":
     try:
