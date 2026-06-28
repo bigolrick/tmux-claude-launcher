@@ -61,18 +61,26 @@ def prompt_choice(prompt, options):
         print("Invalid choice, try again.")
 
 
+def create_tmux_session():
+    """Create a new named tmux session. Returns session name or exits on failure."""
+    hex_code = secrets.token_hex(3)
+    session_name = f"claude-{hex_code}"
+    print(f"\n✓ Creating new session: {session_name}")
+    _, code = run_cmd(f"tmux new-session -d -s {session_name}")
+    if code != 0:
+        print(f"Error: failed to create tmux session '{session_name}'.")
+        sys.exit(1)
+    run_cmd(f"tmux send-keys -t {session_name} 'clear' Enter")
+    return session_name
+
+
 def step_1_tmux():
     """Step 1: New or resume tmux session. Returns session name."""
     print("\n=== TMUX SESSION ===")
     choice = prompt_choice("Pick 1 (new) or 2 (resume): ", ["New tmux session", "Resume existing session"])
 
     if choice == 1:
-        hex_code = secrets.token_hex(3)
-        session_name = f"claude-{hex_code}"
-        print(f"\n✓ Creating new session: {session_name}")
-        run_cmd(f"tmux new-session -d -s {session_name}")
-        run_cmd(f"tmux send-keys -t {session_name} 'clear' Enter")
-        return session_name
+        return create_tmux_session()
 
     # Resume
     while True:
@@ -81,7 +89,7 @@ def step_1_tmux():
             print("No tmux sessions found. Create one first.")
             inner = prompt_choice("Pick 1 (new) or 2 (retry list): ", ["New tmux session", "Retry"])
             if inner == 1:
-                return step_1_tmux()
+                return create_tmux_session()
             continue
 
         print("\nAvailable sessions (sorted by recent activity):")
