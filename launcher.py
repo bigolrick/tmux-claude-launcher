@@ -119,7 +119,7 @@ def step_2_claude(session_name):
 
     if choice == 1:
         print("\n✓ Launching Claude (new remote-control)")
-        tmux_send(session_name, "claude remote-control")
+        tmux_send(session_name, "unset ANTHROPIC_API_KEY && claude remote-control")
     else:
         print("\n✓ Launching Claude (resume)")
         tmux_send(session_name, "claude resume")
