@@ -12,7 +12,7 @@ chmod +x "$INSTALL_DIR/claude-launch"
 
 echo "Installed: $INSTALL_DIR/claude-launch"
 
-if ! echo "$PATH" | grep -q "$INSTALL_DIR"; then
+if ! echo ":$PATH:" | grep -q ":$INSTALL_DIR:"; then
     echo "NOTE: $INSTALL_DIR not in PATH. Add to ~/.bashrc or ~/.zshrc:"
     echo "  export PATH=\"\$HOME/bin:\$PATH\""
 fi

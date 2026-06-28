@@ -6,24 +6,28 @@ then optionally launch Claude with new or resume options.
 """
 
 import os
+import shlex
 import subprocess
 import sys
 import secrets
 
 
-def run_cmd(cmd):
-    """Execute shell command, return (stdout, returncode)."""
+def run_cmd(args):
+    """Execute a command as a list (no shell). Returns (stdout, stderr, returncode)."""
     try:
-        result = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            shell=True
-        )
-        return result.stdout.strip(), result.returncode
+        result = subprocess.run(args, capture_output=True, text=True)
+        return result.stdout.strip(), result.stderr.strip(), result.returncode
     except Exception as e:
-        print(f"Error running command: {e}")
-        return "", 1
+        return "", str(e), 1
+
+
+def run_shell(cmd):
+    """Execute a shell pipeline string. Returns (stdout, stderr, returncode)."""
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, shell=True)
+        return result.stdout.strip(), result.stderr.strip(), result.returncode
+    except Exception as e:
+        return "", str(e), 1
 
 
 def attach_session(session_name):
@@ -33,9 +37,8 @@ def attach_session(session_name):
 
 def list_tmux_sessions():
     """Return list of session names sorted by most recent activity."""
-    # Use \t as separator — can't appear in tmux session names
     cmd = "tmux ls -F '#{session_activity}\t#{session_name}' | sort -rg"
-    output, code = run_cmd(cmd)
+    output, _, code = run_shell(cmd)
     if code != 0 or not output:
         return []
     sessions = []
@@ -66,12 +69,22 @@ def create_tmux_session():
     hex_code = secrets.token_hex(3)
     session_name = f"claude-{hex_code}"
     print(f"\n✓ Creating new session: {session_name}")
-    _, code = run_cmd(f"tmux new-session -d -s {session_name}")
+    _, stderr, code = run_cmd(["tmux", "new-session", "-d", "-s", session_name])
     if code != 0:
-        print(f"Error: failed to create tmux session '{session_name}'.")
+        msg = f": {stderr}" if stderr else ""
+        print(f"Error: failed to create tmux session '{session_name}'{msg}.")
         sys.exit(1)
-    run_cmd(f"tmux send-keys -t {session_name} 'clear' Enter")
+    run_cmd(["tmux", "send-keys", "-t", session_name, "clear", "Enter"])
     return session_name
+
+
+def tmux_send(session_name, keys):
+    """Send keys to a tmux session. Exits with error if session is gone."""
+    _, stderr, code = run_cmd(["tmux", "send-keys", "-t", session_name, keys, "Enter"])
+    if code != 0:
+        msg = f": {stderr}" if stderr else ""
+        print(f"Error: failed to send keys to session '{session_name}'{msg}.")
+        sys.exit(1)
 
 
 def step_1_tmux():
@@ -107,10 +120,10 @@ def step_2_claude(session_name):
 
     if choice == 1:
         print("\n✓ Launching Claude (new remote-control)")
-        run_cmd(f"tmux send-keys -t {session_name} 'claude remote-control' Enter")
+        tmux_send(session_name, "claude remote-control")
     else:
         print("\n✓ Launching Claude (resume)")
-        run_cmd(f"tmux send-keys -t {session_name} 'claude resume' Enter")
+        tmux_send(session_name, "claude resume")
 
     print(f"\n✓ Attaching to tmux session '{session_name}'...")
     attach_session(session_name)  # exec — never returns
