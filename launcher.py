@@ -6,7 +6,6 @@ then optionally launch Claude with new or resume options.
 """
 
 import os
-import shlex
 import subprocess
 import sys
 import secrets
@@ -74,7 +73,7 @@ def create_tmux_session():
         msg = f": {stderr}" if stderr else ""
         print(f"Error: failed to create tmux session '{session_name}'{msg}.")
         sys.exit(1)
-    run_cmd(["tmux", "send-keys", "-t", session_name, "clear", "Enter"])
+    tmux_send(session_name, "clear")
     return session_name
 
 
