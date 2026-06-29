@@ -68,7 +68,7 @@ def create_tmux_session():
     hex_code = secrets.token_hex(3)
     session_name = f"claude-{hex_code}"
     print(f"\n✓ Creating new session: {session_name}")
-    _, stderr, code = run_cmd(["tmux", "new-session", "-d", "-s", session_name])
+    _, stderr, code = run_cmd(["tmux", "new-session", "-d", "-s", session_name, "-c", os.path.expanduser("~")])
     if code != 0:
         msg = f": {stderr}" if stderr else ""
         print(f"Error: failed to create tmux session '{session_name}'{msg}.")
